@@ -4,6 +4,12 @@ const productsContainer = document.getElementById("productsContainer");
 const selectedProductsList = document.getElementById("selectedProductsList");
 const chatForm = document.getElementById("chatForm");
 const chatWindow = document.getElementById("chatWindow");
+const productModal = document.getElementById("productModal");
+const productModalClose = document.getElementById("productModalClose");
+const productModalImage = document.getElementById("productModalImage");
+const productModalBrand = document.getElementById("productModalBrand");
+const productModalTitle = document.getElementById("productModalTitle");
+const productModalDescription = document.getElementById("productModalDescription");
 const selectedProducts = new Map();
 
 let allProducts = [];
@@ -46,11 +52,36 @@ function displayProducts(products) {
       <div class="product-info">
         <h3>${product.name}</h3>
         <p>${product.brand}</p>
+        <button
+          class="details-btn"
+          type="button"
+          data-product-id="${product.id}"
+        >
+          View details
+        </button>
       </div>
     </div>
   `
     )
     .join("");
+}
+
+function openProductModal(product) {
+  if (!product) return;
+
+  productModalImage.src = product.image;
+  productModalImage.alt = product.name;
+  productModalBrand.textContent = product.brand;
+  productModalTitle.textContent = product.name;
+  productModalDescription.textContent = product.description;
+  productModal.hidden = false;
+  document.body.classList.add("modal-open");
+  productModalClose.focus();
+}
+
+function closeProductModal() {
+  productModal.hidden = true;
+  document.body.classList.remove("modal-open");
 }
 
 /* Keep selected-products panel in sync with current selection state */
@@ -94,6 +125,20 @@ function toggleProductSelection(productId) {
 
 /* Select/unselect products directly from the product card grid */
 productsContainer.addEventListener("click", (e) => {
+  const detailsBtn = e.target.closest(".details-btn");
+  if (detailsBtn) {
+    const productId = Number(detailsBtn.dataset.productId);
+    if (!productId) return;
+
+    const product =
+      currentProducts.find((item) => item.id === productId) ||
+      allProducts.find((item) => item.id === productId);
+
+    openProductModal(product);
+
+    return;
+  }
+
   const selectedCard = e.target.closest(".product-card");
   if (!selectedCard) return;
 
@@ -120,6 +165,20 @@ selectedProductsList.addEventListener("click", (e) => {
   );
   if (matchingCard) {
     matchingCard.classList.remove("is-selected");
+  }
+});
+
+productModal.addEventListener("click", (e) => {
+  if (e.target.closest("[data-modal-close='true']")) {
+    closeProductModal();
+  }
+});
+
+productModalClose.addEventListener("click", closeProductModal);
+
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && !productModal.hidden) {
+    closeProductModal();
   }
 });
 
