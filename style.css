@@ -378,6 +378,40 @@ body.modal-open {
   line-height: 1.55;
 }
 
+.chat-message {
+  border-radius: 12px;
+  padding: 10px 12px;
+  margin-bottom: 10px;
+}
+
+.chat-message p {
+  margin: 0;
+}
+
+.chat-message p + p {
+  margin-top: 6px;
+}
+
+.chat-message--assistant {
+  background: rgba(227, 165, 53, 0.12);
+  border: 1px solid rgba(227, 165, 53, 0.36);
+}
+
+.chat-message--pending {
+  opacity: 0.8;
+  font-style: italic;
+}
+
+.chat-message--user {
+  background: rgba(255, 0, 59, 0.09);
+  border: 1px solid rgba(255, 0, 59, 0.26);
+}
+
+.chat-message--error {
+  background: rgba(123, 12, 47, 0.08);
+  border: 1px solid rgba(123, 12, 47, 0.32);
+}
+
 .placeholder-message {
   width: 100%;
   text-align: center;

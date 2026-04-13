@@ -2,8 +2,11 @@
 const categoryFilter = document.getElementById("categoryFilter");
 const productsContainer = document.getElementById("productsContainer");
 const selectedProductsList = document.getElementById("selectedProductsList");
+const generateRoutineBtn = document.getElementById("generateRoutine");
 const chatForm = document.getElementById("chatForm");
 const chatWindow = document.getElementById("chatWindow");
+const userInputField = document.getElementById("userInput");
+const sendBtn = document.getElementById("sendBtn");
 const productModal = document.getElementById("productModal");
 const productModalClose = document.getElementById("productModalClose");
 const productModalImage = document.getElementById("productModalImage");
@@ -14,6 +17,12 @@ const selectedProducts = new Map();
 
 let allProducts = [];
 let currentProducts = [];
+const WORKER_URL =
+  window.CLOUDFLARE_WORKER_URL || window.WORKER_URL || window.API_PROXY_URL || "";
+const BASE_SYSTEM_PROMPT =
+  "You are a skincare and beauty routine advisor. You must stay within skincare, haircare, makeup, fragrance, personal care, and the generated routine context. If a question is unrelated, politely decline and redirect to those topics.";
+let conversationHistory = [];
+let hasGeneratedRoutine = false;
 
 /* Show initial placeholder until user selects a category */
 productsContainer.innerHTML = `
@@ -82,6 +91,163 @@ function openProductModal(product) {
 function closeProductModal() {
   productModal.hidden = true;
   document.body.classList.remove("modal-open");
+}
+
+function escapeHtml(text) {
+  return text
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
+}
+
+function appendChatMessage(message, type = "assistant") {
+  const safeMessage = escapeHtml(message).replaceAll("\n", "<br>");
+  const label =
+    type === "user" ? "You" : type === "error" ? "Error" : "Routine Advisor";
+  const className =
+    type === "user"
+      ? "chat-message chat-message--user"
+      : type === "error"
+      ? "chat-message chat-message--error"
+      : "chat-message chat-message--assistant";
+
+  chatWindow.insertAdjacentHTML(
+    "beforeend",
+    `
+      <div class="${className}">
+        <p><strong>${label}:</strong></p>
+        <p>${safeMessage}</p>
+      </div>
+    `
+  );
+  chatWindow.scrollTop = chatWindow.scrollHeight;
+}
+
+function resetChatWindow() {
+  chatWindow.innerHTML = "";
+}
+
+function addPendingMessage() {
+  const pendingId = `pending-${Date.now()}`;
+  chatWindow.insertAdjacentHTML(
+    "beforeend",
+    `
+      <div class="chat-message chat-message--assistant chat-message--pending" data-pending-id="${pendingId}">
+        <p><strong>Routine Advisor:</strong></p>
+        <p>Generating...</p>
+      </div>
+    `
+  );
+  chatWindow.scrollTop = chatWindow.scrollHeight;
+  return pendingId;
+}
+
+function removePendingMessage(pendingId) {
+  const pendingMessage = chatWindow.querySelector(
+    `[data-pending-id="${pendingId}"]`
+  );
+  if (pendingMessage) {
+    pendingMessage.remove();
+  }
+}
+
+async function requestWorkerCompletion(messages) {
+  const response = await fetch(WORKER_URL, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ messages }),
+  });
+
+  if (!response.ok) {
+    throw new Error(`Worker request failed (${response.status})`);
+  }
+
+  const data = await response.json();
+  const assistantText = data.choices?.[0]?.message?.content?.trim();
+
+  if (!assistantText) {
+    throw new Error("The worker returned an empty response.");
+  }
+
+  return assistantText;
+}
+
+async function generateRoutineFromSelectedProducts() {
+  if (selectedProducts.size === 0) {
+    appendChatMessage(
+      "Select at least one product before generating a routine.",
+      "error"
+    );
+    return;
+  }
+
+  if (!WORKER_URL) {
+    appendChatMessage(
+      "Missing Cloudflare Worker URL. Add CLOUDFLARE_WORKER_URL in secrets.js.",
+      "error"
+    );
+    return;
+  }
+
+  const selectedProductData = Array.from(selectedProducts.values()).map(
+    ({ name, brand, category, description }) => ({
+      name,
+      brand,
+      category,
+      description,
+    })
+  );
+
+  generateRoutineBtn.disabled = true;
+  generateRoutineBtn.textContent = "Generating...";
+  resetChatWindow();
+  const pendingId = addPendingMessage();
+
+  try {
+    const messages = [
+      {
+        role: "system",
+        content: BASE_SYSTEM_PROMPT,
+      },
+      {
+        role: "user",
+        content: `Selected products JSON:\n${JSON.stringify(
+          selectedProductData,
+          null,
+          2
+        )}`,
+      },
+      {
+        role: "user",
+        content:
+          "Create a personalized routine using ONLY the selected products. Format with: Morning Routine, Evening Routine, and 2-4 short usage tips.",
+      },
+    ];
+
+    const routineText = await requestWorkerCompletion(messages);
+    conversationHistory = [
+      ...messages,
+      { role: "assistant", content: routineText },
+    ];
+    hasGeneratedRoutine = true;
+
+    resetChatWindow();
+    appendChatMessage(routineText, "assistant");
+  } catch (error) {
+    removePendingMessage(pendingId);
+    appendChatMessage(
+      `Could not generate routine. ${error.message || "Please try again."}`,
+      "error"
+    );
+  } finally {
+    generateRoutineBtn.disabled = false;
+    generateRoutineBtn.innerHTML =
+      '<i class="fa-solid fa-wand-magic-sparkles"></i> Generate Routine';
+  }
 }
 
 /* Keep selected-products panel in sync with current selection state */
@@ -202,8 +368,50 @@ categoryFilter.addEventListener("change", async (e) => {
 /* Chat form submission handler - placeholder for OpenAI integration */
 chatForm.addEventListener("submit", (e) => {
   e.preventDefault();
+  const question = userInputField.value.trim();
+  if (!question) return;
 
-  chatWindow.innerHTML = "Connect to the OpenAI API for a response!";
+  if (!hasGeneratedRoutine) {
+    appendChatMessage(
+      "Generate a routine first, then ask follow-up questions about it.",
+      "error"
+    );
+    return;
+  }
+
+  if (!WORKER_URL) {
+    appendChatMessage(
+      "Missing Cloudflare Worker URL. Add CLOUDFLARE_WORKER_URL in secrets.js.",
+      "error"
+    );
+    return;
+  }
+
+  appendChatMessage(question, "user");
+  userInputField.value = "";
+  sendBtn.disabled = true;
+  const pendingId = addPendingMessage();
+
+  conversationHistory.push({ role: "user", content: question });
+
+  requestWorkerCompletion(conversationHistory)
+    .then((assistantReply) => {
+      removePendingMessage(pendingId);
+      conversationHistory.push({ role: "assistant", content: assistantReply });
+      appendChatMessage(assistantReply, "assistant");
+    })
+    .catch((error) => {
+      removePendingMessage(pendingId);
+      appendChatMessage(
+        `Could not answer that follow-up. ${error.message || "Please try again."}`,
+        "error"
+      );
+    })
+    .finally(() => {
+      sendBtn.disabled = false;
+    });
 });
+
+generateRoutineBtn.addEventListener("click", generateRoutineFromSelectedProducts);
 
 renderSelectedProducts();
