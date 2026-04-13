@@ -334,6 +334,30 @@ body.modal-open {
   transform: scale(1.04);
 }
 
+.clear-selections-btn {
+  margin-top: 12px;
+  width: 100%;
+  border: 1px solid rgba(255, 0, 59, 0.3);
+  border-radius: 12px;
+  padding: 10px 14px;
+  font-size: 0.92rem;
+  font-weight: 700;
+  color: #7b1e3f;
+  background: rgba(255, 255, 255, 0.94);
+  cursor: pointer;
+  transition: background 160ms ease, border-color 160ms ease, color 160ms ease;
+}
+
+.clear-selections-btn:hover {
+  background: rgba(255, 0, 59, 0.08);
+  border-color: rgba(255, 0, 59, 0.5);
+}
+
+.clear-selections-btn:disabled {
+  opacity: 0.48;
+  cursor: not-allowed;
+}
+
 .generate-btn {
   margin-top: 16px;
   width: 100%;

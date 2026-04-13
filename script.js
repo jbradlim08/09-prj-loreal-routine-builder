@@ -2,6 +2,7 @@
 const categoryFilter = document.getElementById("categoryFilter");
 const productsContainer = document.getElementById("productsContainer");
 const selectedProductsList = document.getElementById("selectedProductsList");
+const clearSelectionsBtn = document.getElementById("clearSelections");
 const generateRoutineBtn = document.getElementById("generateRoutine");
 const chatForm = document.getElementById("chatForm");
 const chatWindow = document.getElementById("chatWindow");
@@ -19,6 +20,7 @@ let allProducts = [];
 let currentProducts = [];
 const WORKER_URL =
   window.CLOUDFLARE_WORKER_URL || window.WORKER_URL || window.API_PROXY_URL || "";
+const SELECTED_PRODUCTS_STORAGE_KEY = "lorealSelectedProducts";
 const BASE_SYSTEM_PROMPT =
   "You are a skincare and beauty routine advisor. You must stay within skincare, haircare, makeup, fragrance, personal care, and the generated routine context. If a question is unrelated, politely decline and redirect to those topics.";
 let conversationHistory = [];
@@ -36,6 +38,33 @@ async function loadProducts() {
   const response = await fetch("products.json");
   const data = await response.json();
   return data.products;
+}
+
+function saveSelectedProductsToStorage() {
+  try {
+    const selected = Array.from(selectedProducts.values());
+    localStorage.setItem(SELECTED_PRODUCTS_STORAGE_KEY, JSON.stringify(selected));
+  } catch (error) {
+    console.error("Could not save selected products:", error);
+  }
+}
+
+function loadSelectedProductsFromStorage() {
+  try {
+    const rawValue = localStorage.getItem(SELECTED_PRODUCTS_STORAGE_KEY);
+    if (!rawValue) return;
+
+    const savedProducts = JSON.parse(rawValue);
+    if (!Array.isArray(savedProducts)) return;
+
+    savedProducts.forEach((product) => {
+      if (product?.id) {
+        selectedProducts.set(product.id, product);
+      }
+    });
+  } catch (error) {
+    console.error("Could not load selected products:", error);
+  }
 }
 
 /* Create HTML for displaying product cards */
@@ -256,6 +285,7 @@ function renderSelectedProducts() {
     selectedProductsList.innerHTML = `
       <p class="selected-empty">No products selected yet.</p>
     `;
+    clearSelectionsBtn.disabled = true;
     return;
   }
 
@@ -271,6 +301,7 @@ function renderSelectedProducts() {
     `
     )
     .join("");
+  clearSelectionsBtn.disabled = false;
 }
 
 function toggleProductSelection(productId) {
@@ -286,6 +317,7 @@ function toggleProductSelection(productId) {
     selectedProducts.set(productId, product);
   }
 
+  saveSelectedProductsToStorage();
   renderSelectedProducts();
 }
 
@@ -324,6 +356,7 @@ selectedProductsList.addEventListener("click", (e) => {
   if (!productId || !selectedProducts.has(productId)) return;
 
   selectedProducts.delete(productId);
+  saveSelectedProductsToStorage();
   renderSelectedProducts();
 
   const matchingCard = productsContainer.querySelector(
@@ -332,6 +365,18 @@ selectedProductsList.addEventListener("click", (e) => {
   if (matchingCard) {
     matchingCard.classList.remove("is-selected");
   }
+});
+
+clearSelectionsBtn.addEventListener("click", () => {
+  if (selectedProducts.size === 0) return;
+
+  selectedProducts.clear();
+  saveSelectedProductsToStorage();
+  renderSelectedProducts();
+
+  productsContainer
+    .querySelectorAll(".product-card.is-selected")
+    .forEach((card) => card.classList.remove("is-selected"));
 });
 
 productModal.addEventListener("click", (e) => {
@@ -414,4 +459,5 @@ chatForm.addEventListener("submit", (e) => {
 
 generateRoutineBtn.addEventListener("click", generateRoutineFromSelectedProducts);
 
+loadSelectedProductsFromStorage();
 renderSelectedProducts();
