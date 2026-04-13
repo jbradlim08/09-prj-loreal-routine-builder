@@ -1,5 +1,6 @@
 /* Get references to DOM elements */
 const categoryFilter = document.getElementById("categoryFilter");
+const productSearch = document.getElementById("productSearch");
 const productsContainer = document.getElementById("productsContainer");
 const selectedProductsList = document.getElementById("selectedProductsList");
 const clearSelectionsBtn = document.getElementById("clearSelections");
@@ -18,18 +19,41 @@ const selectedProducts = new Map();
 
 let allProducts = [];
 let currentProducts = [];
+const queryParams = new URLSearchParams(window.location.search);
+const requestedDir = queryParams.get("dir");
+const requestedLang = queryParams.get("lang");
+const htmlLang = document.documentElement.lang || "";
+const browserLang = navigator.language || "";
+
+function shouldUseRtlLanguage(langValue) {
+  return /^(ar|fa|he|ur)(-|$)/i.test(langValue || "");
+}
+
+if (requestedLang) {
+  document.documentElement.lang = requestedLang;
+}
+
+if (requestedDir === "rtl" || requestedDir === "ltr") {
+  document.documentElement.setAttribute("dir", requestedDir);
+} else if (
+  shouldUseRtlLanguage(requestedLang) ||
+  shouldUseRtlLanguage(htmlLang) ||
+  shouldUseRtlLanguage(browserLang)
+) {
+  document.documentElement.setAttribute("dir", "rtl");
+}
 const WORKER_URL =
   window.CLOUDFLARE_WORKER_URL || window.WORKER_URL || window.API_PROXY_URL || "";
 const SELECTED_PRODUCTS_STORAGE_KEY = "lorealSelectedProducts";
 const BASE_SYSTEM_PROMPT =
-  "You are a skincare and beauty routine advisor. You must stay within skincare, haircare, makeup, fragrance, personal care, and the generated routine context. If a question is unrelated, politely decline and redirect to those topics.";
+  "You are a skincare and beauty routine advisor. You must stay within skincare, haircare, makeup, fragrance, personal care, and the generated routine context. Use web search when useful for current information about products, ingredients, and routine guidance. Include concise source links when web information is used. If a question is unrelated, politely decline and redirect to those topics.";
 let conversationHistory = [];
 let hasGeneratedRoutine = false;
 
-/* Show initial placeholder until user selects a category */
+/* Show initial placeholder until products are loaded */
 productsContainer.innerHTML = `
   <div class="placeholder-message">
-    Select a category to view products
+    Loading products...
   </div>
 `;
 
@@ -65,6 +89,29 @@ function loadSelectedProductsFromStorage() {
   } catch (error) {
     console.error("Could not load selected products:", error);
   }
+}
+
+function applyProductFilters() {
+  if (allProducts.length === 0) {
+    return;
+  }
+
+  const selectedCategory = categoryFilter.value;
+  const searchTerm = productSearch.value.trim().toLowerCase();
+
+  const filteredProducts = allProducts.filter((product) => {
+    const matchesCategory =
+      !selectedCategory || product.category === selectedCategory;
+    if (!matchesCategory) return false;
+
+    if (!searchTerm) return true;
+
+    const searchableText =
+      `${product.name} ${product.brand} ${product.category} ${product.description}`.toLowerCase();
+    return searchableText.includes(searchTerm);
+  });
+
+  displayProducts(filteredProducts);
 }
 
 /* Create HTML for displaying product cards */
@@ -123,7 +170,7 @@ function closeProductModal() {
 }
 
 function escapeHtml(text) {
-  return text
+  return String(text)
     .replaceAll("&", "&amp;")
     .replaceAll("<", "&lt;")
     .replaceAll(">", "&gt;")
@@ -131,7 +178,35 @@ function escapeHtml(text) {
     .replaceAll("'", "&#39;");
 }
 
-function appendChatMessage(message, type = "assistant") {
+function renderCitations(citations = []) {
+  if (!Array.isArray(citations) || citations.length === 0) {
+    return "";
+  }
+
+  const citationItems = citations
+    .map((citation) => {
+      if (!citation?.url) return "";
+      const safeUrl = escapeHtml(citation.url);
+      const safeTitle = escapeHtml(citation.title || citation.url);
+      return `
+        <li>
+          <a href="${safeUrl}" target="_blank" rel="noopener noreferrer">${safeTitle}</a>
+        </li>
+      `;
+    })
+    .join("");
+
+  if (!citationItems) return "";
+
+  return `
+    <div class="chat-citations">
+      <p><strong>Sources:</strong></p>
+      <ul>${citationItems}</ul>
+    </div>
+  `;
+}
+
+function appendChatMessage(message, type = "assistant", citations = []) {
   const safeMessage = escapeHtml(message).replaceAll("\n", "<br>");
   const label =
     type === "user" ? "You" : type === "error" ? "Error" : "Routine Advisor";
@@ -148,6 +223,7 @@ function appendChatMessage(message, type = "assistant") {
       <div class="${className}">
         <p><strong>${label}:</strong></p>
         <p>${safeMessage}</p>
+        ${type === "assistant" ? renderCitations(citations) : ""}
       </div>
     `
   );
@@ -196,13 +272,52 @@ async function requestWorkerCompletion(messages) {
   }
 
   const data = await response.json();
-  const assistantText = data.choices?.[0]?.message?.content?.trim();
+  if (data?.error) {
+    const errorMessage =
+      typeof data.error === "string"
+        ? data.error
+        : data.error.message || "Worker returned an error.";
+    throw new Error(errorMessage);
+  }
+
+  const chatCompletionContent = data.choices?.[0]?.message?.content;
+  const chatCompletionText = Array.isArray(chatCompletionContent)
+    ? chatCompletionContent
+        .map((part) => part?.text || "")
+        .join("\n")
+        .trim()
+    : String(chatCompletionContent || "").trim();
+
+  const responsesApiText = Array.isArray(data.output)
+    ? data.output
+        .flatMap((item) => item?.content || [])
+        .map((contentItem) => {
+          if (contentItem?.type === "output_text") {
+            return contentItem.text || "";
+          }
+          if (typeof contentItem?.text === "string") {
+            return contentItem.text;
+          }
+          return "";
+        })
+        .join("\n")
+        .trim()
+    : "";
+
+  const assistantText = (
+    data.answer ||
+    data.output_text ||
+    chatCompletionText ||
+    responsesApiText ||
+    ""
+  ).trim();
+  const citations = Array.isArray(data.citations) ? data.citations : [];
 
   if (!assistantText) {
     throw new Error("The worker returned an empty response.");
   }
 
-  return assistantText;
+  return { assistantText, citations };
 }
 
 async function generateRoutineFromSelectedProducts() {
@@ -257,15 +372,15 @@ async function generateRoutineFromSelectedProducts() {
       },
     ];
 
-    const routineText = await requestWorkerCompletion(messages);
+    const { assistantText, citations } = await requestWorkerCompletion(messages);
     conversationHistory = [
       ...messages,
-      { role: "assistant", content: routineText },
+      { role: "assistant", content: assistantText },
     ];
     hasGeneratedRoutine = true;
 
     resetChatWindow();
-    appendChatMessage(routineText, "assistant");
+    appendChatMessage(assistantText, "assistant", citations);
   } catch (error) {
     removePendingMessage(pendingId);
     appendChatMessage(
@@ -394,20 +509,13 @@ document.addEventListener("keydown", (e) => {
 });
 
 /* Filter and display products when category changes */
-categoryFilter.addEventListener("change", async (e) => {
-  if (allProducts.length === 0) {
-    allProducts = await loadProducts();
-  }
+categoryFilter.addEventListener("change", () => {
+  applyProductFilters();
+});
 
-  const selectedCategory = e.target.value;
-
-  /* filter() creates a new array containing only products 
-     where the category matches what the user selected */
-  const filteredProducts = allProducts.filter(
-    (product) => product.category === selectedCategory
-  );
-
-  displayProducts(filteredProducts);
+/* Search products by name or keyword while typing */
+productSearch.addEventListener("input", () => {
+  applyProductFilters();
 });
 
 /* Chat form submission handler - placeholder for OpenAI integration */
@@ -440,10 +548,10 @@ chatForm.addEventListener("submit", (e) => {
   conversationHistory.push({ role: "user", content: question });
 
   requestWorkerCompletion(conversationHistory)
-    .then((assistantReply) => {
+    .then(({ assistantText, citations }) => {
       removePendingMessage(pendingId);
-      conversationHistory.push({ role: "assistant", content: assistantReply });
-      appendChatMessage(assistantReply, "assistant");
+      conversationHistory.push({ role: "assistant", content: assistantText });
+      appendChatMessage(assistantText, "assistant", citations);
     })
     .catch((error) => {
       removePendingMessage(pendingId);
@@ -461,3 +569,16 @@ generateRoutineBtn.addEventListener("click", generateRoutineFromSelectedProducts
 
 loadSelectedProductsFromStorage();
 renderSelectedProducts();
+
+loadProducts()
+  .then((products) => {
+    allProducts = products;
+    applyProductFilters();
+  })
+  .catch(() => {
+    productsContainer.innerHTML = `
+      <div class="placeholder-message">
+        Could not load products. Please refresh the page.
+      </div>
+    `;
+  });
